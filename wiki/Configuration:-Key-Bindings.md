@@ -373,3 +373,16 @@ binds {
     Super+Alt+L allow-inhibiting=false { spawn "swaylock"; }
 }
 ```
+
+#### `pin-window`, `unpin-window`
+
+<sup>Since: 25.5</sup>
+
+`pin-window` moves the focused floating window to a special space visible on all workspaces. Use `unpin-window` to move it back to the active workspace.
+
+```kdl
+binds {
+    Mod+P { pin-window; }
+    Mod+Shift+P { unpin-window; }
+}
+```

@@ -4073,10 +4073,7 @@ impl Niri {
         // Get monitor elements.
         let mon = self.layout.monitor_for_output(output).unwrap();
         let zoom = mon.overview_zoom();
-        let monitor_elements = Vec::from_iter(
-            mon.render_elements(renderer, target, focus_ring)
-                .map(|(geo, iter)| (geo, Vec::from_iter(iter))),
-        );
+        let monitor_elements = Vec::from_iter(mon.render_elements(renderer, target, focus_ring));
         let workspace_shadow_elements = Vec::from_iter(mon.render_workspace_shadows(renderer));
         let insert_hint_elements = mon.render_insert_hint_between_workspaces(renderer);
         let int_move_elements: Vec<_> = self

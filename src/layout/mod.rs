@@ -1803,6 +1803,11 @@ impl<W: LayoutElement> Layout<W> {
         Some(&mut monitors[*active_monitor_idx])
     }
 
+    /// Mutable reference to the currently active monitor.
+    pub fn active_monitor_mut(&mut self) -> Option<&mut Monitor<W>> {
+        self.active_monitor()
+    }
+
     pub fn active_monitor_ref(&self) -> Option<&Monitor<W>> {
         let MonitorSet::Normal {
             monitors,
@@ -2144,31 +2149,31 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn focus_window_top(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(monitor) = self.active_monitor() else {
             return;
         };
-        workspace.focus_window_top();
+        monitor.focus_window_top();
     }
 
     pub fn focus_window_bottom(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(monitor) = self.active_monitor() else {
             return;
         };
-        workspace.focus_window_bottom();
+        monitor.focus_window_bottom();
     }
 
     pub fn focus_window_down_or_top(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(monitor) = self.active_monitor() else {
             return;
         };
-        workspace.focus_window_down_or_top();
+        monitor.focus_window_down_or_top();
     }
 
     pub fn focus_window_up_or_bottom(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(monitor) = self.active_monitor() else {
             return;
         };
-        workspace.focus_window_up_or_bottom();
+        monitor.focus_window_up_or_bottom();
     }
 
     pub fn move_to_workspace_up(&mut self) {
@@ -3397,6 +3402,38 @@ impl<W: LayoutElement> Layout<W> {
             return;
         };
         workspace.set_window_floating(window, floating);
+    }
+
+    pub fn pin_window(&mut self, window: Option<&W::Id>) {
+        let Some(monitor) = self.active_monitor() else {
+            return;
+        };
+
+        let id = if let Some(id) = window {
+            id.clone()
+        } else if let Some(win) = monitor.active_window() {
+            win.id().clone()
+        } else {
+            return;
+        };
+
+        monitor.pin_window(&id);
+    }
+
+    pub fn unpin_window(&mut self, window: Option<&W::Id>) {
+        let Some(monitor) = self.active_monitor() else {
+            return;
+        };
+
+        let id = if let Some(id) = window {
+            id.clone()
+        } else if let Some(win) = monitor.active_window() {
+            win.id().clone()
+        } else {
+            return;
+        };
+
+        monitor.unpin_window(&id);
     }
 
     pub fn focus_floating(&mut self) {

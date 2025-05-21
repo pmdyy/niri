@@ -1608,6 +1608,104 @@ fn operations_dont_panic() {
 }
 
 #[test]
+fn pinned_window_persists_across_workspace_switch() {
+    let mut layout: Layout<TestWindow> = Default::default();
+
+    let output = Output::new(
+        "output0".to_string(),
+        PhysicalProperties {
+            size: Size::from((1280, 720)),
+            subpixel: Subpixel::Unknown,
+            make: String::new(),
+            model: String::new(),
+        },
+    );
+    output.change_current_state(
+        Some(Mode {
+            size: Size::from((1280, 720)),
+            refresh: 60000,
+        }),
+        None,
+        None,
+        None,
+    );
+    output.user_data().insert_if_missing(|| OutputName {
+        connector: "output0".to_string(),
+        make: None,
+        model: None,
+        serial: None,
+    });
+    layout.add_output(output.clone());
+
+    let params = TestWindowParams { id: 1, is_floating: true, ..TestWindowParams::new(1) };
+    let win = TestWindow::new(params);
+    layout.add_window(
+        win.clone(),
+        AddWindowTarget::Output(&output),
+        None,
+        None,
+        false,
+        true,
+        ActivateWindow::Yes,
+    );
+
+    layout.pin_window(Some(win.id()));
+
+    {
+        let mon = layout.active_monitor_mut().unwrap();
+        mon.add_workspace_bottom();
+    }
+    layout.switch_workspace_down();
+
+    let mon = layout.active_monitor_ref().unwrap();
+    assert!(mon.pinned_has_window(win.id()));
+}
+
+#[test]
+fn pinned_window_focus_traversal() {
+    let mut layout: Layout<TestWindow> = Default::default();
+
+    let output = Output::new(
+        "output0".to_string(),
+        PhysicalProperties {
+            size: Size::from((1280, 720)),
+            subpixel: Subpixel::Unknown,
+            make: String::new(),
+            model: String::new(),
+        },
+    );
+    output.change_current_state(
+        Some(Mode {
+            size: Size::from((1280, 720)),
+            refresh: 60000,
+        }),
+        None,
+        None,
+        None,
+    );
+    output.user_data().insert_if_missing(|| OutputName {
+        connector: "output0".to_string(),
+        make: None,
+        model: None,
+        serial: None,
+    });
+    layout.add_output(output.clone());
+
+    let win1 = TestWindow::new(TestWindowParams { id: 1, is_floating: true, ..TestWindowParams::new(1) });
+    let win2 = TestWindow::new(TestWindowParams { id: 2, is_floating: true, ..TestWindowParams::new(2) });
+    layout.add_window(win1.clone(), AddWindowTarget::Output(&output), None, None, false, true, ActivateWindow::Yes);
+    layout.add_window(win2.clone(), AddWindowTarget::Output(&output), None, None, false, true, ActivateWindow::Yes);
+
+    layout.pin_window(Some(win1.id()));
+
+    layout.focus_window_down_or_top();
+    assert_eq!(layout.focus().unwrap().id(), win2.id());
+
+    layout.focus_window_up_or_bottom();
+    assert_eq!(layout.focus().unwrap().id(), win1.id());
+}
+
+#[test]
 fn operations_from_starting_state_dont_panic() {
     if std::env::var_os("RUN_SLOW_TESTS").is_none() {
         eprintln!("ignoring slow test");

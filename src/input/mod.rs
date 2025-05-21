@@ -1868,6 +1868,30 @@ impl State {
                     self.niri.queue_redraw_all();
                 }
             }
+            Action::PinWindow => {
+                self.niri.layout.pin_window(None);
+                self.niri.queue_redraw_all();
+            }
+            Action::PinWindowById(id) => {
+                let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
+                let window = window.map(|(_, m)| m.window.clone());
+                if let Some(window) = window {
+                    self.niri.layout.pin_window(Some(&window));
+                    self.niri.queue_redraw_all();
+                }
+            }
+            Action::UnpinWindow => {
+                self.niri.layout.unpin_window(None);
+                self.niri.queue_redraw_all();
+            }
+            Action::UnpinWindowById(id) => {
+                let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
+                let window = window.map(|(_, m)| m.window.clone());
+                if let Some(window) = window {
+                    self.niri.layout.unpin_window(Some(&window));
+                    self.niri.queue_redraw_all();
+                }
+            }
             Action::FocusFloating => {
                 self.niri.layout.focus_floating();
                 self.maybe_warp_cursor_to_focus();

@@ -13,6 +13,7 @@ use smithay::utils::{Logical, Point, Rectangle, Size};
 use super::insert_hint_element::{InsertHintElement, InsertHintRenderElement};
 use super::scrolling::{Column, ColumnWidth};
 use super::tile::Tile;
+use super::floating::FloatingSpace;
 use super::workspace::{
     compute_working_area, OutputId, Workspace, WorkspaceAddWindowTarget, WorkspaceId,
     WorkspaceRenderElement,
@@ -78,6 +79,10 @@ pub struct Monitor<W: LayoutElement> {
     pub(super) overview_open: bool,
     /// Progress of the overview zoom animation, 1 is fully in overview.
     overview_progress: Option<OverviewProgress>,
+    /// Floating windows that are pinned across workspaces.
+    pinned_floating: FloatingSpace<W>,
+    /// Whether the pinned floating space is active.
+    pinned_is_active: bool,
     /// Clock for driving animations.
     pub(super) clock: Clock,
     /// Configurable properties of the layout.
@@ -289,6 +294,14 @@ impl<W: LayoutElement> Monitor<W> {
             scale,
             view_size,
             working_area,
+            pinned_floating: FloatingSpace::new(
+                view_size,
+                working_area,
+                scale.fractional_scale(),
+                clock.clone(),
+                options.clone(),
+            ),
+            pinned_is_active: false,
             workspaces,
             active_workspace_idx: 0,
             previous_workspace_id: None,
@@ -340,7 +353,15 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     pub fn windows(&self) -> impl Iterator<Item = &W> {
-        self.workspaces.iter().flat_map(|ws| ws.windows())
+        self.workspaces
+            .iter()
+            .flat_map(|ws| ws.windows())
+            .chain(self.pinned_floating.tiles().map(Tile::window))
+    }
+
+    /// Return whether the pinned floating space contains the window.
+    pub fn pinned_has_window(&self, window: &W::Id) -> bool {
+        self.pinned_floating.has_window(window)
     }
 
     pub fn has_window(&self, window: &W::Id) -> bool {
@@ -599,6 +620,50 @@ impl<W: LayoutElement> Monitor<W> {
         true
     }
 
+    pub fn pin_window(&mut self, id: &W::Id) {
+        if self.pinned_floating.has_window(id) {
+            return;
+        }
+
+        for (idx, ws) in self.workspaces.iter_mut().enumerate() {
+            if ws.is_floating(id) {
+                let was_active_ws = idx == self.active_workspace_idx;
+                let was_active_win = ws.active_window().map(|w| w.id()) == Some(id);
+                let removed = ws.remove_tile(id, Transaction::new());
+                self.pinned_floating.add_tile(removed.tile, true);
+
+                if was_active_ws && was_active_win && ws.floating_is_active() {
+                    self.pinned_is_active = true;
+                }
+                break;
+            }
+        }
+    }
+
+    pub fn unpin_window(&mut self, id: &W::Id) {
+        if !self.pinned_floating.has_window(id) {
+            return;
+        }
+
+        let was_active = self
+            .pinned_floating
+            .active_window()
+            .map(|w| w.id())
+            == Some(id);
+        let removed = self.pinned_floating.remove_tile(id);
+        self.active_workspace().add_tile(
+            removed.tile,
+            WorkspaceAddWindowTarget::Auto,
+            ActivateWindow::Yes,
+            removed.width,
+            removed.is_full_width,
+            true,
+        );
+        if was_active || self.pinned_floating.is_empty() {
+            self.pinned_is_active = false;
+        }
+    }
+
     pub fn move_down_or_to_workspace_down(&mut self) {
         if !self.active_workspace().move_down() {
             self.move_to_workspace_down();
@@ -620,6 +685,53 @@ impl<W: LayoutElement> Monitor<W> {
     pub fn focus_window_or_workspace_up(&mut self) {
         if !self.active_workspace().focus_up() {
             self.switch_workspace_up();
+        }
+    }
+
+    pub fn focus_window_top(&mut self) {
+        if self.pinned_is_active {
+            self.pinned_floating.focus_topmost();
+        } else {
+            self.active_workspace().focus_window_top();
+        }
+    }
+
+    pub fn focus_window_bottom(&mut self) {
+        if self.pinned_is_active {
+            self.pinned_floating.focus_bottommost();
+        } else {
+            self.active_workspace().focus_window_bottom();
+        }
+    }
+
+    pub fn focus_window_down_or_top(&mut self) {
+        if self.pinned_is_active {
+            if !self.pinned_floating.focus_down() {
+                self.pinned_is_active = false;
+                self.active_workspace().focus_window_top();
+            }
+        } else {
+            if !self.active_workspace().focus_down() {
+                self.active_workspace().focus_window_top();
+            }
+        }
+    }
+
+    pub fn focus_window_up_or_bottom(&mut self) {
+        if self.pinned_is_active {
+            if !self.pinned_floating.focus_up() {
+                self.pinned_is_active = false;
+                self.active_workspace().focus_window_bottom();
+            }
+        } else {
+            if !self.active_workspace().focus_up() {
+                if self.pinned_floating.is_empty() {
+                    self.active_workspace().focus_window_bottom();
+                } else {
+                    self.pinned_is_active = true;
+                    self.pinned_floating.focus_bottommost();
+                }
+            }
         }
     }
 
@@ -857,7 +969,11 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     pub fn active_window(&self) -> Option<&W> {
-        self.active_workspace_ref().active_window()
+        if self.pinned_is_active {
+            self.pinned_floating.active_window()
+        } else {
+            self.active_workspace_ref().active_window()
+        }
     }
 
     pub fn advance_animations(&mut self) {
@@ -898,6 +1014,8 @@ impl<W: LayoutElement> Monitor<W> {
         for ws in &mut self.workspaces {
             ws.advance_animations();
         }
+
+        self.pinned_floating.advance_animations();
     }
 
     pub(super) fn are_animations_ongoing(&self) -> bool {
@@ -905,6 +1023,7 @@ impl<W: LayoutElement> Monitor<W> {
             .as_ref()
             .is_some_and(|s| s.is_animation_ongoing())
             || self.workspaces.iter().any(|ws| ws.are_animations_ongoing())
+            || self.pinned_floating.are_animations_ongoing()
     }
 
     pub fn are_transitions_ongoing(&self) -> bool {
@@ -913,6 +1032,7 @@ impl<W: LayoutElement> Monitor<W> {
                 .workspaces
                 .iter()
                 .any(|ws| ws.are_transitions_ongoing())
+            || self.pinned_floating.are_transitions_ongoing()
     }
 
     pub fn update_render_elements(&mut self, is_active: bool) {
@@ -929,6 +1049,11 @@ impl<W: LayoutElement> Monitor<W> {
                 insert_hint_ws_geo = Some(geo);
             }
         }
+
+        let view_rect = Rectangle::from_size(self.view_size);
+        self
+            .pinned_floating
+            .update_render_elements(is_active, view_rect);
 
         self.insert_hint_render_loc = None;
         if let Some(hint) = &self.insert_hint {
@@ -1021,6 +1146,13 @@ impl<W: LayoutElement> Monitor<W> {
             ws.update_config(options.clone());
         }
 
+        self.pinned_floating.update_config(
+            self.view_size,
+            self.working_area,
+            self.scale.fractional_scale(),
+            options.clone(),
+        );
+
         self.insert_hint_element.update_config(options.insert_hint);
 
         self.options = options;
@@ -1030,6 +1162,8 @@ impl<W: LayoutElement> Monitor<W> {
         for ws in &mut self.workspaces {
             ws.update_shaders();
         }
+
+        self.pinned_floating.update_shaders();
 
         self.insert_hint_element.update_shaders();
     }
@@ -1042,6 +1176,13 @@ impl<W: LayoutElement> Monitor<W> {
         for ws in &mut self.workspaces {
             ws.update_output_size();
         }
+
+        self.pinned_floating.update_config(
+            self.view_size,
+            self.working_area,
+            self.scale.fractional_scale(),
+            self.options.clone(),
+        );
     }
 
     pub fn move_workspace_down(&mut self) {
@@ -1470,12 +1611,7 @@ impl<W: LayoutElement> Monitor<W> {
         renderer: &'a mut R,
         target: RenderTarget,
         focus_ring: bool,
-    ) -> impl Iterator<
-        Item = (
-            Rectangle<f64, Logical>,
-            impl Iterator<Item = MonitorRenderElement<R>> + 'a,
-        ),
-    > {
+    ) -> impl Iterator<Item = (Rectangle<f64, Logical>, Vec<MonitorRenderElement<R>>)> + 'a {
         let _span = tracy_client::span!("Monitor::render_elements");
 
         let scale = self.scale.fractional_scale();
@@ -1520,8 +1656,39 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
-        self.workspaces_with_render_geo().map(move |(ws, geo)| {
+        let pinned_geo = Rectangle::from_size(self.view_size);
+
+        let pinned_iter = {
             let map_ws_contents = move |elem: WorkspaceRenderElement<R>| {
+                let elem = CropRenderElement::from_element(elem, scale, crop_bounds)?;
+                let elem = MonitorInnerRenderElement::Workspace(elem);
+                Some(elem)
+            };
+
+            let view_rect = Rectangle::from_size(self.view_size);
+            let iter = self
+                .pinned_floating
+                .render_elements(renderer, view_rect, target, focus_ring)
+                .into_iter()
+                .map(WorkspaceRenderElement::from)
+                .filter_map(map_ws_contents)
+                .map(move |elem| {
+                    let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
+                    RelocateRenderElement::from_element(
+                        elem,
+                        pinned_geo.loc.to_physical_precise_round(scale),
+                        Relocate::Relative,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            (pinned_geo, iter)
+        };
+
+        let mut res = Vec::new();
+
+        for (ws, geo) in self.workspaces_with_render_geo() {
+            let map_ws_contents = |elem: WorkspaceRenderElement<R>| {
                 let elem = CropRenderElement::from_element(elem, scale, crop_bounds)?;
                 let elem = MonitorInnerRenderElement::Workspace(elem);
                 Some(elem)
@@ -1546,20 +1713,23 @@ impl<W: LayoutElement> Monitor<W> {
 
             let iter = floating.chain(hint).chain(scrolling);
 
-            let iter = iter.map(move |elem| {
-                let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
-                RelocateRenderElement::from_element(
-                    elem,
-                    // The offset we get from workspaces_with_render_positions() is already
-                    // rounded to physical pixels, but it's in the logical coordinate
-                    // space, so we need to convert it to physical.
-                    geo.loc.to_physical_precise_round(scale),
-                    Relocate::Relative,
-                )
-            });
+            let iter = iter
+                .map(move |elem| {
+                    let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
+                    RelocateRenderElement::from_element(
+                        elem,
+                        geo.loc.to_physical_precise_round(scale),
+                        Relocate::Relative,
+                    )
+                })
+                .collect::<Vec<_>>();
 
-            (geo, iter)
-        })
+            res.push((geo, iter));
+        }
+
+        res.push(pinned_iter);
+
+        res.into_iter()
     }
 
     pub fn render_workspace_shadows<'a, R: NiriRenderer>(

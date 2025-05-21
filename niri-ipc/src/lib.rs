@@ -778,6 +778,24 @@ pub enum Action {
         )]
         y: PositionChange,
     },
+    /// Pin a floating window so it shows on all workspaces.
+    #[cfg_attr(feature = "clap", clap(about = "Pin the focused floating window"))]
+    PinWindow {
+        /// Id of the window to pin.
+        ///
+        /// If `None`, uses the focused window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: Option<u64>,
+    },
+    /// Unpin a previously pinned window.
+    #[cfg_attr(feature = "clap", clap(about = "Unpin the focused pinned window"))]
+    UnpinWindow {
+        /// Id of the window to unpin.
+        ///
+        /// If `None`, uses the focused window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: Option<u64>,
+    },
     /// Toggle the opacity of a window.
     #[cfg_attr(
         feature = "clap",
